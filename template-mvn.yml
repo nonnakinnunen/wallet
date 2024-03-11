@@ -1,0 +1,297 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: An AWS Lambda application that calls the Lambda API.
+Resources:
+  DDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: "Accounts"
+      AttributeDefinitions:
+        - AttributeName: "AccountId"
+          AttributeType: "N"
+      KeySchema:
+        - AttributeName: "AccountId"
+          KeyType: "HASH"
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+  DDBTable2:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: "Transactions"
+      AttributeDefinitions:
+        - AttributeName: "TransactionId"
+          AttributeType: "N"
+        - AttributeName: "AccountId"
+          AttributeType: "N"
+      KeySchema:
+        - AttributeName: "TransactionId"
+          KeyType: "HASH"
+        - AttributeName: "AccountId"
+          KeyType: "RANGE"
+      ProvisionedThroughput:
+        ReadCapacityUnits: 10
+        WriteCapacityUnits: 10
+  LambdaBalanceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: target/wallet-1.0-SNAPSHOT.jar
+      Handler: wallet.HandlerForBalance
+      Runtime: java21
+      Description: Java function
+      MemorySize: 2048
+      Timeout: 10
+      # Function's execution role
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AWSLambda_ReadOnlyAccess
+        - AWSXrayWriteOnlyAccess
+        - AmazonDynamoDBReadOnlyAccess
+      Tracing: Active
+    DependsOn:
+      - DDBTable
+      - DDBTable2
+  LambdaBetFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: target/wallet-1.0-SNAPSHOT.jar
+      Handler: wallet.HandlerForBet
+      Runtime: java21
+      Description: Java function
+      MemorySize: 2048
+      Timeout: 10
+      # Function's execution role
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AWSLambda_ReadOnlyAccess
+        - AWSXrayWriteOnlyAccess
+        - AmazonDynamoDBFullAccess
+      Tracing: Active
+    DependsOn:
+      - DDBTable
+      - DDBTable2
+  LambdaWinFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: target/wallet-1.0-SNAPSHOT.jar
+      Handler: wallet.HandlerForWin
+      Runtime: java21
+      Description: Java function
+      MemorySize: 2048
+      Timeout: 10
+      # Function's execution role
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AWSLambda_ReadOnlyAccess
+        - AWSXrayWriteOnlyAccess
+        - AmazonDynamoDBFullAccess
+      Tracing: Active
+    DependsOn:
+      - DDBTable
+      - DDBTable2
+  LambdaTestingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: target/wallet-1.0-SNAPSHOT.jar
+      Handler: wallet.testing.HandlerForTestingWallet
+      Runtime: java21
+      Description: Java function
+      MemorySize: 2048
+      Timeout: 10
+      # Function's execution role
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AWSLambda_ReadOnlyAccess
+        - AWSXrayWriteOnlyAccess
+        - AmazonDynamoDBFullAccess
+      Tracing: Active
+    DependsOn:
+      - DDBTable
+      - DDBTable2
+  APIGatewayRestAPI:
+    Type: 'AWS::ApiGateway::RestApi'
+    Properties:
+      Name: WalletAPI
+    DependsOn:
+      - LambdaBalanceFunction
+      - LambdaBetFunction
+      - LambdaWinFunction
+  APIGatewayPlayerResource:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      RestApiId: !Ref APIGatewayRestAPI
+      ParentId: !GetAtt
+        - APIGatewayRestAPI
+        - RootResourceId
+      PathPart: player
+    DependsOn:
+      - APIGatewayRestAPI
+  APIGatewayBalanceResource:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      RestApiId: !Ref APIGatewayRestAPI
+      ParentId: !Ref APIGatewayPlayerResource
+      PathPart: '{accountId}'
+    DependsOn:
+      - APIGatewayRestAPI
+  APIGatewayBalanceMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      RestApiId: !Ref APIGatewayRestAPI
+      ResourceId: !Ref APIGatewayBalanceResource
+      HttpMethod: GET
+      AuthorizationType: AWS_IAM
+      RequestParameters:
+        method.request.path.accountId: true
+      MethodResponses:
+        - StatusCode: 200
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_TEMPLATES
+        RequestTemplates:
+          application/json: |
+            {
+               "accountId": $input.params('accountId')
+            }
+        IntegrationResponses:
+          - StatusCode: 200
+        Uri: !Sub
+          - >-
+            arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFuncNameArn}/invocations
+          - LambdaFuncNameArn: !GetAtt LambdaBalanceFunction.Arn
+    DependsOn:
+      - APIGatewayBalanceResource
+  APIGatewayBetResource:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      RestApiId: !Ref APIGatewayRestAPI
+      ParentId: !Ref APIGatewayPlayerResource
+      PathPart: bet
+    DependsOn:
+      - APIGatewayRestAPI
+  APIGatewayBetMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      RestApiId: !Ref APIGatewayRestAPI
+      ResourceId: !Ref APIGatewayBetResource
+      HttpMethod: POST
+      AuthorizationType: AWS_IAM
+      MethodResponses:
+        - StatusCode: 200
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_TEMPLATES
+        RequestTemplates:
+          application/json:
+               $input.json('$')
+        IntegrationResponses:
+          - StatusCode: 200
+        Uri: !Sub
+          - >-
+            arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFuncNameArn}/invocations
+          - LambdaFuncNameArn: !GetAtt LambdaBetFunction.Arn
+    DependsOn:
+      - APIGatewayBetResource
+  APIGatewayWinResource:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      RestApiId: !Ref APIGatewayRestAPI
+      ParentId: !Ref APIGatewayPlayerResource
+      PathPart: win
+    DependsOn:
+      - APIGatewayRestAPI
+  APIGatewayWinMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      RestApiId: !Ref APIGatewayRestAPI
+      ResourceId: !Ref APIGatewayWinResource
+      HttpMethod: POST
+      AuthorizationType: AWS_IAM
+      MethodResponses:
+        - StatusCode: 200
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_TEMPLATES
+        RequestTemplates:
+          application/json:
+            $input.json('$')
+        IntegrationResponses:
+          - StatusCode: 200
+        Uri: !Sub
+          - >-
+            arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFuncNameArn}/invocations
+          - LambdaFuncNameArn: !GetAtt LambdaWinFunction.Arn
+    DependsOn:
+      - APIGatewayWinResource
+  APIGatewayDeployment:
+    Type: 'AWS::ApiGateway::Deployment'
+    Properties:
+      RestApiId: !Ref APIGatewayRestAPI
+      StageName: development
+    DependsOn:
+      - APIGatewayBalanceMethod
+      - APIGatewayBetMethod
+      - APIGatewayWinMethod
+  APIGatewayBalancePermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt LambdaBalanceFunction.Arn
+      Principal: apigateway.amazonaws.com
+    DependsOn:
+      - APIGatewayDeployment
+  APIGatewayWinPermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt LambdaWinFunction.Arn
+      Principal: apigateway.amazonaws.com
+    DependsOn:
+      - APIGatewayDeployment
+  APIGatewayBetPermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt LambdaBetFunction.Arn
+      Principal: apigateway.amazonaws.com
+    DependsOn:
+      - APIGatewayDeployment
+  myuser:
+    Type: AWS::IAM::User
+    Properties:
+      Path: "/"
+      UserName: !Ref UserNameParameter
+      LoginProfile:
+        Password: !Ref PassParameter
+  mypolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: gatewayPolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - apigateway:POST
+              - apigateway:GET
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - execute-api:Invoke
+              - execute-api:ManageConnections
+            Resource: 'arn:aws:execute-api:*:*:*'
+      Users:
+        - !Ref myuser
+    DependsOn:
+      - myuser
+Parameters:
+  PassParameter:
+    Type: String
+    Default: myP@ssW0rd
+    NoEcho: true
+  UserNameParameter:
+    Type: String
+    Default: newIAMUser
